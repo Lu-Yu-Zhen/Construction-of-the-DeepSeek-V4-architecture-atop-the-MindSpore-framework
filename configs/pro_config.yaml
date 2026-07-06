@@ -1,0 +1,58 @@
+# DeepSeek-V4-Pro Configuration
+# 1.6T total parameters, 49B activated parameters
+# Paper: "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence"
+
+# ---- Base Architecture ----
+vocab_size: 128000
+num_layers: 61
+hidden_size: 7168                  # d
+max_seq_length: 1048576            # 1M tokens
+
+# ---- Attention (Common) ----
+num_query_heads: 128               # n_h
+head_dim: 512                      # c
+query_compress_dim: 1536           # d_c
+rope_dim: 64                       # RoPE applied dimensions
+num_output_groups: 16              # g (grouped output projection)
+group_output_dim: 1024             # d_g
+
+# ---- CSA Parameters ----
+csa_compress_rate: 4               # m
+csa_indexer_num_heads: 64          # n_I^h
+csa_indexer_head_dim: 128          # c_I
+csa_top_k: 1024                    # sparse attention top-k
+
+# ---- HCA Parameters ----
+hca_compress_rate: 128             # m'
+
+# ---- Sliding Window ----
+sliding_window_size: 128           # n_win
+
+# ---- Attention Sink ----
+use_attention_sink: true
+
+# ---- MoE Parameters ----
+num_shared_experts: 1
+num_routed_experts: 384
+num_activated_experts: 6
+expert_intermediate_dim: 3072
+num_hash_routing_layers: 3         # first N layers use Hash routing
+load_balance_bias_update_speed: 0.001
+balance_loss_weight: 0.0001
+
+# ---- mHC Parameters ----
+mhc_expansion_factor: 4            # n_hc
+mhc_sinkhorn_iters: 20             # t_max
+
+# ---- MTP Parameters ----
+mtp_depth: 1
+mtp_loss_weight: 0.3
+
+# ---- Layer Attention Schedule ----
+# First 2 layers: HCA, then CSA/HCA alternating
+attention_schedule: "hca_first_2_then_alternate"
+
+# ---- SwiGLU Clamping ----
+swiglu_clamp_min: -10.0
+swiglu_clamp_max: 10.0
+gate_clamp_max: 10.0
