@@ -1,4 +1,4 @@
-# DeepSeek-V4
+# 基于MindSpore框架的DeepSeek-V4架构构建
 
 基于论文 *"DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence"* 的 **MindSpore** 实现。
 
