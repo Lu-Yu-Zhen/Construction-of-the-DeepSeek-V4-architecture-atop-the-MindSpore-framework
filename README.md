@@ -1,4 +1,4 @@
-# DeepSeek-V4
+# Construction of the DeepSeek V4 architecture atop the MindSpore framework
 
 English | [中文](README_zh.md)
 
