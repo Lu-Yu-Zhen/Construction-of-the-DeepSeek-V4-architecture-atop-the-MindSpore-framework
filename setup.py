@@ -12,10 +12,10 @@ setup(
     long_description_content_type="text/markdown",
     author="Research",
     license="MIT",
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     packages=find_packages(),
     install_requires=[
-        "mindspore>=2.2.0",
+        "mindspore>=2.8.0",
         "numpy>=1.20.0",
     ],
     classifiers=[
