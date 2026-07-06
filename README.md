@@ -190,4 +190,6 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## Disclaimer
 
-This is a research implementation based on the published paper. It is intended for academic and educational purposes.
+This repository is an independent research project derived from the DeepSeek-V4 technical report, strictly confined to academic exploration and knowledge learning. The core objective of this project is architectural-level conceptual validation, explicitly excluding production-grade engineering practices such as hardware-specific operator optimizations, distributed training strategies, and inference acceleration.
+
+Therefore, the implementation details and performance figures presented in this repository are neither officially endorsed standards nor reliable references for official model performance.
