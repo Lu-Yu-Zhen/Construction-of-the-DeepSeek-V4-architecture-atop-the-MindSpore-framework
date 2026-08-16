@@ -99,7 +99,7 @@ class KVCompressor(nn.Cell):
         Z = Z.reshape(batch, n_blocks, m, c)
 
         S = ops.softmax(Z + bias, axis=2)
-        C_comp = ops.sum(S * C, axis=2)
+        C_comp = ops.sum(S * C, dim=2)
         return C_comp
 
     def construct(self, H: Tensor) -> Tensor:
@@ -125,10 +125,10 @@ class KVCompressor(nn.Cell):
         Za = Za[:, :n_blocks * m, :].reshape(batch, n_blocks, m, c)
 
         Cb_padded = ops.pad(Cb[:, :n_blocks * m, :],
-                            ((0, 0), (m, 0), (0, 0)),
+                            (0, 0, m, 0, 0, 0),
                             mode='constant', value=0.0)
         Zb_padded = ops.pad(Zb[:, :n_blocks * m, :],
-                            ((0, 0), (m, 0), (0, 0)),
+                            (0, 0, m, 0, 0, 0),
                             mode='constant', value=float('-inf'))
 
         # 拼接 a 和 b 分支后做 softmax (论文 Eq.11)
@@ -143,11 +143,11 @@ class KVCompressor(nn.Cell):
         Sb = S[:, :, m:, :]
 
         Cb_shifted = Cb[:, :n_blocks * m, :]
-        Cb_shifted = ops.pad(Cb_shifted, ((0, 0), (m, 0), (0, 0)),
+        Cb_shifted = ops.pad(Cb_shifted, (0, 0, m, 0, 0, 0),
                              mode='constant', value=0.0)
         Cb_shifted = Cb_shifted[:, :n_blocks * m, :].reshape(batch, n_blocks, m, c)
 
-        C_comp = ops.sum(Sa * Ca, axis=2) + ops.sum(Sb * Cb_shifted, axis=2)
+        C_comp = ops.sum(Sa * Ca, dim=2) + ops.sum(Sb * Cb_shifted, dim=2)
         return C_comp
 
 
@@ -210,7 +210,7 @@ class LightningIndexer(nn.Cell):
         Z = Z[:, :n_blocks * m, :].reshape(batch, n_blocks, m, c_I)
 
         S = ops.softmax(Z + self.indexer_bias, axis=2)
-        K_comp = ops.sum(S * C, axis=2)
+        K_comp = ops.sum(S * C, dim=2)
         return K_comp
 
     def compute_index_scores(
@@ -240,10 +240,12 @@ class LightningIndexer(nn.Cell):
         dots = ops.relu(dots)
 
         w_I = w_I.expand_dims(-1)
-        scores = ops.sum(w_I * dots, axis=2)
+        scores = ops.sum(w_I * dots, dim=2)
 
         # Top-k 选择 (论文 Eq.17)
-        _, top_k_idx = ops.topk(scores, self.top_k)
+        # 当压缩块数少于 top_k 时（短序列），取实际可用块数，避免算子越界
+        k = min(self.top_k, scores.shape[-1])
+        _, top_k_idx = ops.topk(scores, k)
         return top_k_idx
 
 
@@ -387,8 +389,11 @@ class CompressedSparseAttention(nn.Cell):
         top_k_idx = self.indexer.compute_index_scores(H, c_Q, K_indexer)
 
         # 收集选中的压缩 KV 条目 (使用最后一个 token 的索引作为近似)
-        last_idx = top_k_idx[:, -1, :]
-        selected_kv = ops.gather(C_comp_rope, last_idx, axis=1)
+        last_idx = top_k_idx[:, -1, :]  # (batch, k)
+        # gather_d 沿 axis=1 为每个 batch 按各自的 top-k 索引取值，得到 (batch, k, c)
+        c_dim = C_comp_rope.shape[-1]
+        gather_idx = last_idx.expand_dims(-1).tile((1, 1, c_dim))
+        selected_kv = ops.gather_d(C_comp_rope, 1, gather_idx)
 
         # 拼接压缩 KV + 滑动窗口 KV
         swa_kv_window = swa_kv[:, -self.n_win:, :]

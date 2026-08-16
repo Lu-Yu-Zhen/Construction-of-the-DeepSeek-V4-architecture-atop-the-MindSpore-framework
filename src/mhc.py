@@ -16,7 +16,7 @@ Manifold-Constrained Hyper-Connections (mHC)
 """
 
 import numpy as np
-import mindspore as nn
+import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor, dtype as mstype
 from typing import Tuple
@@ -46,9 +46,9 @@ class SinkhornKnopp(nn.Cell):
         """
         M = ops.exp(M)
         for _ in range(self.num_iters):
-            col_sum = ops.sum(M, axis=-2, keepdims=True) + 1e-8
+            col_sum = ops.sum(M, dim=-2, keepdim=True) + 1e-8
             M = M / col_sum
-            row_sum = ops.sum(M, axis=-1, keepdims=True) + 1e-8
+            row_sum = ops.sum(M, dim=-1, keepdim=True) + 1e-8
             M = M / row_sum
         return M
 
@@ -148,11 +148,14 @@ class ManifoldConstrainedHyperConnection(nn.Cell):
 
         # 生成无约束原始参数 (论文 Eq.3-5)
         A_tilde = self.alpha_pre * ops.matmul(X_hat, self.W_pre) + self.S_pre
+        # A_tilde: (batch, n_hc) -> (batch, 1, n_hc)
+        A_tilde = A_tilde.expand_dims(1)
         B_flat = ops.matmul(X_hat, self.W_res)
         B_tilde = B_flat.reshape(batch, self.n_hc, self.n_hc)
         B_tilde = self.alpha_res * B_tilde + self.S_res
-        C_tilde = self.alpha_post * ops.matmul(X_hat, self.W_post).transpose(0, 2, 1)
-        C_tilde = C_tilde + self.S_post
+        C_tilde = self.alpha_post * ops.matmul(X_hat, self.W_post)
+        # C_tilde: (batch, n_hc) -> (batch, n_hc, 1)
+        C_tilde = C_tilde.expand_dims(-1) + self.S_post
 
         # 施加约束 (论文 Eq.6-8)
         A = ops.sigmoid(A_tilde)

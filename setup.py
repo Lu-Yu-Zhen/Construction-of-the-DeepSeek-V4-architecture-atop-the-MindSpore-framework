@@ -16,7 +16,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "mindspore>=2.8.0",
-        "numpy>=1.20.0",
+        "numpy>=1.20,<2",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",

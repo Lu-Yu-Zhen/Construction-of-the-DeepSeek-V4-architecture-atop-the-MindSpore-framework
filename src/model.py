@@ -219,10 +219,12 @@ class DeepSeekV4Model(nn.Cell):
         H = self.embedding(input_ids)  # (batch, seq_len, d)
 
         # --- 初始化 mHC 残差状态 ---
-        # X_0: (batch, n_hc, d)，将 embedding 复制到 n_hc 个流
+        # X_0: (batch, n_hc, d)
+        # 设计约定: TransformerBlock 采用单个 (batch, n_hc, d) 序列聚合状态，
+        # 各层内部再展开到序列维度。因此对序列取均值得到每序列一个基向量后扩展 n_hc 流。
         n_hc = self.config.mhc_expansion_factor
-        X = H.expand_dims(1).tile((1, n_hc, 1))  # (batch, n_hc, d)
-        # 注: 实际需要为每个位置创建状态，这里简化处理
+        h_base = ops.mean(H, axis=1)  # (batch, d)
+        X = h_base.expand_dims(1).tile((1, n_hc, 1))  # (batch, n_hc, d)
 
         # --- 通过 Transformer Blocks ---
         total_balance_loss = Tensor(0.0, mstype.float32)

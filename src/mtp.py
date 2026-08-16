@@ -40,11 +40,12 @@ class MultiTokenPrediction(nn.Cell):
         self.mtp_depth = config.mtp_depth
 
         # MTP 额外 Transformer Block
+        # 输入为 [h; e] 拼接后的 2*d 维向量，因此第一个 RMSNorm 作用维度为 2*d
         self.mtp_blocks = nn.CellList()
         for _ in range(self.mtp_depth):
             self.mtp_blocks.append(
                 nn.SequentialCell([
-                    RMSNorm(config.hidden_size),
+                    RMSNorm(config.hidden_size * 2),
                     nn.Dense(config.hidden_size * 2, config.hidden_size,
                              has_bias=False),
                 ])

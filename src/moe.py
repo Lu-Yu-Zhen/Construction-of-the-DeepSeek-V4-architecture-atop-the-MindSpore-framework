@@ -33,11 +33,11 @@ class SwiGLUExpert(nn.Cell):
 
     def __init__(self, hidden_size: int, intermediate_dim: int,
                  clamp_min: float = -10.0, clamp_max: float = 10.0,
-                 gate_max: float = 10.0):
+                 gate_clamp_max: float = 10.0):
         super().__init__()
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
-        self.gate_max = gate_max
+        self.gate_clamp_max = gate_clamp_max
 
         self.W_gate = nn.Dense(hidden_size, intermediate_dim, has_bias=False)
         self.W_up = nn.Dense(hidden_size, intermediate_dim, has_bias=False)
@@ -52,7 +52,7 @@ class SwiGLUExpert(nn.Cell):
         up = self.W_up(x)
 
         # SwiGLU Clamping
-        gate = ops.clip_by_value(gate, self.clamp_min, self.gate_max)
+        gate = ops.clip_by_value(gate, self.clamp_min, self.gate_clamp_max)
         up = ops.clip_by_value(up, self.clamp_min, self.clamp_max)
 
         # SwiGLU: SiLU(gate) * up = gate * sigmoid(gate) * up
@@ -145,7 +145,7 @@ class DeepSeekMoE(nn.Cell):
         top_k_scores, top_k_indices = ops.topk(scores, self.num_activated)
 
         # 归一化
-        top_k_scores = top_k_scores / (ops.sum(top_k_scores, axis=-1, keepdims=True) + 1e-8)
+        top_k_scores = top_k_scores / (ops.sum(top_k_scores, dim=-1, keepdim=True) + 1e-8)
 
         return top_k_scores, top_k_indices
 
@@ -202,7 +202,7 @@ class DeepSeekMoE(nn.Cell):
                                   Tensor(1.0, mstype.float32),
                                   Tensor(0.0, mstype.float32))
                 expert_counts = expert_counts + hot
-            expert_counts = ops.sum(expert_counts, axis=1)
+            expert_counts = ops.sum(expert_counts, dim=1)
             expert_counts = expert_counts / (seq_len * self.num_activated + 1e-8)
             balance_loss = ops.mean((expert_counts - 1.0 / self.num_routed) ** 2)
             balance_loss = balance_loss * self.config.balance_loss_weight
