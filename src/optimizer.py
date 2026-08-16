@@ -99,6 +99,11 @@ class MuonOptimizer(nn.Optimizer):
         for i, (param, grad) in enumerate(zip(self.parameters, gradients)):
             if grad is None:
                 continue
+            # Muon 正交化仅适用于权重矩阵 (2D)。1D/标量参数 (如 RMSNorm、偏置、
+            # 门控因子、Attention Sink) 不参与，交由 AdamW 处理，避免 Newton-Schulz
+            # 对 0/1 维张量进行 matrix 操作而崩溃。
+            if param.ndim < 2:
+                continue
 
             moment = self.moments[i]
 
