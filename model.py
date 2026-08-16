@@ -286,10 +286,10 @@ class SinkhornKnopp(nn.Cell):
         M = ops.exp(M)
         for _ in range(self.num_iters):
             # 列归一化
-            col_sum = ops.sum(M, axis=-2, keepdims=True) + 1e-8
+            col_sum = ops.sum(M, dim=-2, keepdim=True) + 1e-8
             M = M / col_sum
             # 行归一化
-            row_sum = ops.sum(M, axis=-1, keepdims=True) + 1e-8
+            row_sum = ops.sum(M, dim=-1, keepdim=True) + 1e-8
             M = M / row_sum
         return M
 
@@ -391,15 +391,16 @@ class ManifoldConstrainedHyperConnection(nn.Cell):
 
         # 生成无约束原始参数
         A_tilde = self.alpha_pre * ops.matmul(X_hat, self.W_pre) + self.S_pre
-        # A_tilde: (batch, 1, n_hc)
+        # A_tilde: (batch, n_hc) -> (batch, 1, n_hc)
+        A_tilde = A_tilde.expand_dims(1)
 
         B_flat = ops.matmul(X_hat, self.W_res)  # (batch, n_hc^2)
         B_tilde = B_flat.reshape(batch, self.n_hc, self.n_hc)
         B_tilde = self.alpha_res * B_tilde + self.S_res
 
-        C_tilde = self.alpha_post * ops.matmul(X_hat, self.W_post).transpose(0, 2, 1)
-        # C_tilde: (batch, n_hc, 1)
-        C_tilde = C_tilde + self.S_post
+        C_tilde = self.alpha_post * ops.matmul(X_hat, self.W_post)
+        # C_tilde: (batch, n_hc) -> (batch, n_hc, 1)
+        C_tilde = C_tilde.expand_dims(-1) + self.S_post
 
         # 施加约束
         A = ops.sigmoid(A_tilde)                   # (batch, 1, n_hc)
@@ -514,7 +515,7 @@ class KVCompressor(nn.Cell):
         S = ops.softmax(Z + bias, axis=2)  # 在 m 维度上 softmax
 
         # 加权求和
-        C_comp = ops.sum(S * C, axis=2)  # (batch, n_blocks, c)
+        C_comp = ops.sum(S * C, dim=2)  # (batch, n_blocks, c)
         return C_comp
 
     def construct(self, H: Tensor) -> Tensor:
@@ -545,10 +546,10 @@ class KVCompressor(nn.Cell):
         Ca = Ca[:, :n_blocks * m, :].reshape(batch, n_blocks, m, c)
         Za = Za[:, :n_blocks * m, :].reshape(batch, n_blocks, m, c)
         Cb_padded = ops.pad(Cb[:, :n_blocks * m, :],
-                            ((0, 0), (m, 0), (0, 0)),
+                            (0, 0, m, 0, 0, 0),
                             mode='constant', value=0.0)
         Zb_padded = ops.pad(Zb[:, :n_blocks * m, :],
-                            ((0, 0), (m, 0), (0, 0)),
+                            (0, 0, m, 0, 0, 0),
                             mode='constant', value=float('-inf'))
 
         # 拼接 a 和 b 分支后做 softmax (论文 Eq.11)
@@ -564,11 +565,11 @@ class KVCompressor(nn.Cell):
 
         # Cb 块偏移: 第 i 块使用 Cb[m*(i-1) : m*i]
         Cb_shifted = Cb[:, :n_blocks * m, :]
-        Cb_shifted = ops.pad(Cb_shifted, ((0, 0), (m, 0), (0, 0)),
+        Cb_shifted = ops.pad(Cb_shifted, (0, 0, m, 0, 0, 0),
                              mode='constant', value=0.0)
         Cb_shifted = Cb_shifted[:, :n_blocks * m, :].reshape(batch, n_blocks, m, c)
 
-        C_comp = ops.sum(Sa * Ca, axis=2) + ops.sum(Sb * Cb_shifted, axis=2)
+        C_comp = ops.sum(Sa * Ca, dim=2) + ops.sum(Sb * Cb_shifted, dim=2)
         return C_comp
 
 
@@ -629,7 +630,7 @@ class LightningIndexer(nn.Cell):
         Z = Z[:, :n_blocks * m, :].reshape(batch, n_blocks, m, c_I)
 
         S = ops.softmax(Z + self.indexer_bias, axis=2)
-        K_comp = ops.sum(S * C, axis=2)  # (batch, n_blocks, c_I)
+        K_comp = ops.sum(S * C, dim=2)  # (batch, n_blocks, c_I)
         return K_comp
 
     def compute_index_scores(
@@ -667,10 +668,12 @@ class LightningIndexer(nn.Cell):
 
         # 加权求和 over heads
         w_I = w_I.expand_dims(-1)  # (batch, num_q, n_I^h, 1)
-        scores = ops.sum(w_I * dots, axis=2)  # (batch, num_q, n_blocks)
+        scores = ops.sum(w_I * dots, dim=2)  # (batch, num_q, n_blocks)
 
         # Top-k 选择
-        top_k_vals, top_k_idx = ops.topk(scores, self.top_k)
+        # 短序列时压缩块数可能少于 top_k，取实际可用块数避免算子越界
+        k = min(self.top_k, scores.shape[-1])
+        top_k_vals, top_k_idx = ops.topk(scores, k)
         return top_k_idx
 
 
@@ -829,11 +832,10 @@ class CompressedSparseAttention(nn.Cell):
         # 简化: 使用最后一个 token 的 top-k 索引代表所有 query (近似)
         # 完整实现需 per-query gather，此处为效率取近似
         last_idx = top_k_idx[:, -1, :]  # (batch, top_k)
-        selected_kv = ops.gather(
-            C_comp_rope,           # (batch, n_blocks, c)
-            last_idx,              # (batch, top_k)
-            axis=1
-        )  # (batch, top_k, c)
+        # gather_d 沿 axis=1 为每个 batch 按各自索引取值，得到 (batch, top_k, c)
+        c_dim = C_comp_rope.shape[-1]
+        gather_idx = last_idx.expand_dims(-1).tile((1, 1, c_dim))
+        selected_kv = ops.gather_d(C_comp_rope, 1, gather_idx)
 
         # 拼接压缩 KV + 滑动窗口 KV (论文 Figure 3)
         # 滑动窗口取最后 n_win 个 token 的 KV
@@ -1142,11 +1144,11 @@ class SwiGLUExpert(nn.Cell):
 
     def __init__(self, hidden_size: int, intermediate_dim: int,
                  clamp_min: float = -10.0, clamp_max: float = 10.0,
-                 gate_max: float = 10.0):
+                 gate_clamp_max: float = 10.0):
         super().__init__()
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
-        self.gate_max = gate_max
+        self.gate_clamp_max = gate_clamp_max
 
         self.W_gate = nn.Dense(hidden_size, intermediate_dim, has_bias=False)
         self.W_up = nn.Dense(hidden_size, intermediate_dim, has_bias=False)
@@ -1161,7 +1163,7 @@ class SwiGLUExpert(nn.Cell):
         up = self.W_up(x)
 
         # SwiGLU Clamping (论文 Section 4.2.3)
-        gate = ops.clip_by_value(gate, self.clamp_min, self.gate_max)
+        gate = ops.clip_by_value(gate, self.clamp_min, self.gate_clamp_max)
         up = ops.clip_by_value(up, self.clamp_min, self.clamp_max)
 
         # SwiGLU: SiLU(gate) * up = (gate * sigmoid(gate)) * up
@@ -1258,7 +1260,7 @@ class DeepSeekMoE(nn.Cell):
         top_k_scores, top_k_indices = ops.topk(scores, self.num_activated)
 
         # 归一化
-        top_k_scores = top_k_scores / (ops.sum(top_k_scores, axis=-1, keepdims=True) + 1e-8)
+        top_k_scores = top_k_scores / (ops.sum(top_k_scores, dim=-1, keepdim=True) + 1e-8)
 
         return top_k_scores, top_k_indices
 
@@ -1323,7 +1325,7 @@ class DeepSeekMoE(nn.Cell):
                                   Tensor(0.0, mstype.float32))
                 expert_counts = expert_counts + hot
             # 在序列维度求和 -> (batch, num_routed)
-            expert_counts = ops.sum(expert_counts, axis=1)
+            expert_counts = ops.sum(expert_counts, dim=1)
             # 归一化
             expert_counts = expert_counts / (seq_len * self.num_activated + 1e-8)
             # 均衡损失: 方差
@@ -1462,7 +1464,7 @@ class MultiTokenPrediction(nn.Cell):
         for _ in range(self.mtp_depth):
             self.mtp_blocks.append(
                 nn.SequentialCell([
-                    RMSNorm(config.hidden_size),
+                    RMSNorm(config.hidden_size * 2),
                     nn.Dense(config.hidden_size * 2, config.hidden_size, has_bias=False),
                 ])
             )
@@ -1582,10 +1584,12 @@ class DeepSeekV4Model(nn.Cell):
         H = self.embedding(input_ids)  # (batch, seq_len, d)
 
         # --- 初始化 mHC 残差状态 ---
-        # X_0: (batch, n_hc, d)，将 embedding 复制到 n_hc 个流
+        # X_0: (batch, n_hc, d)
+        # 设计约定: TransformerBlock 采用单个 (batch, n_hc, d) 序列聚合状态，
+        # 各层内部再展开到序列维度。因此对序列取均值得到每序列一个基向量后扩展 n_hc 流。
         n_hc = self.config.mhc_expansion_factor
-        X = H.expand_dims(1).tile((1, n_hc, 1))  # (batch, n_hc, d)
-        # 注: 实际需要为每个位置创建状态，这里简化处理
+        h_base = ops.mean(H, axis=1)  # (batch, d)
+        X = h_base.expand_dims(1).tile((1, n_hc, 1))  # (batch, n_hc, d)
 
         # --- 通过 Transformer Blocks ---
         total_balance_loss = Tensor(0.0, mstype.float32)
